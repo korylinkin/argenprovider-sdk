@@ -7,6 +7,8 @@ import { useCheckout } from "./use-checkout.js";
 import { useReturnRefresh } from "./use-return-refresh.js";
 import { StatusBadge } from "./status-badge.js";
 import type { Purchase } from "../core/types.js";
+import type { Appearance } from "./appearance.js";
+import { apcVariablesToStyle, cx } from "./appearance.js";
 
 export interface CreditsTexts {
   title: string;
@@ -59,6 +61,7 @@ export interface CreditsSectionProps {
   pageSize?: number;
   texts?: Partial<CreditsTexts>;
   className?: string;
+  appearance?: Appearance;
 }
 
 function formatDate(iso: string): string {
@@ -83,6 +86,10 @@ export function CreditsSection(props: CreditsSectionProps) {
   const basePath = props.basePath ?? "/api/credits";
   const pageSize = props.pageSize ?? 10;
   const t: CreditsTexts = { ...DEFAULT_TEXTS, ...props.texts };
+
+  const theme = props.appearance?.theme ?? "light";
+  const styleVars = apcVariablesToStyle(props.appearance?.variables);
+  const cn = props.appearance?.classNames ?? {};
 
   const { balance, loading: loadingBalance, refresh: refreshBalance } = useCreditsBalance({ basePath });
   const { purchases, page, setPage, loading: loadingPurchases, refresh: refreshPurchases } = usePurchases({
@@ -110,65 +117,67 @@ export function CreditsSection(props: CreditsSectionProps) {
   const arsPerUSD = balance?.arsPerUSD ?? null;
 
   return (
-    <div className={`apc-root ${props.className ?? ""}`}>
-      <div className="apc-header">
-        <h1 className="apc-title">{t.title}</h1>
-        <p className="apc-subtitle">{t.subtitle}</p>
+    <div
+      className={cx("apc-root", props.className, cn["root"])}
+      data-apc-theme={theme}
+      style={styleVars}
+    >
+      <div className={cx("apc-header", cn["header"])}>
+        <h1 className={cx("apc-title", cn["title"])}>{t.title}</h1>
+        <p className={cx("apc-subtitle", cn["subtitle"])}>{t.subtitle}</p>
       </div>
 
-      <div className="apc-card">
+      <div className={cx("apc-card", cn["card"])}>
         {loadingBalance ? (
-          <span className="apc-spinner" />
+          <span className={cx("apc-spinner", cn["spinner"])} />
         ) : (
           <>
-            <span className="apc-balance-label">{t.balanceLabel}</span>
-            {/* Sin balance = argenprovider no respondió: mostramos "—" (no un 0
-                que haría creer al usuario que se quedó sin créditos). */}
-            <div className="apc-balance-value">{balance ? formatCredits(balance.remainingUSD) : "—"}</div>
-            {!balance && <p className="apc-note">{t.balanceUnavailable}</p>}
+            <span className={cx("apc-balance-label", cn["balanceLabel"])}>{t.balanceLabel}</span>
+            <div className={cx("apc-balance-value", cn["balanceValue"])}>{balance ? formatCredits(balance.remainingUSD) : "—"}</div>
+            {!balance && <p className={cx("apc-note", cn["note"])}>{t.balanceUnavailable}</p>}
 
-            <div className="apc-divider" />
+            <div className={cx("apc-divider", cn["divider"])} />
 
-            {error && <p className="apc-error">{error}</p>}
+            {error && <p className={cx("apc-error", cn["error"])}>{error}</p>}
 
-            <button type="button" className="apc-btn apc-btn-primary" onClick={() => startCheckout()} disabled={pending}>
-              {pending ? <span className="apc-spinner" /> : t.buyButton}
+            <button type="button" className={cx("apc-btn apc-btn-primary", cn["btnPrimary"])} onClick={() => startCheckout()} disabled={pending}>
+              {pending ? <span className={cx("apc-spinner", cn["spinner"])} /> : t.buyButton}
             </button>
 
             {checkingPopup && (
-              <p className="apc-checking">
-                <span className="apc-spinner" /> {t.checkingPopup}
+              <p className={cx("apc-checking", cn["checking"])}>
+                <span className={cx("apc-spinner", cn["spinner"])} /> {t.checkingPopup}
               </p>
             )}
 
-            {arsPerUSD !== null && <p className="apc-rate">1 crédito = ${formatARS(arsPerUSD)} ARS</p>}
-            <p className="apc-hint">{t.hint}</p>
+            {arsPerUSD !== null && <p className={cx("apc-rate", cn["rate"])}>1 crédito = ${formatARS(arsPerUSD)} ARS</p>}
+            <p className={cx("apc-hint", cn["hint"])}>{t.hint}</p>
           </>
         )}
       </div>
 
-      <div className="apc-card apc-card-flush">
-        <div className="apc-card-flush-header">
-          <h2 className="apc-section-title">{t.historyTitle}</h2>
-          {verifyMessage && <p className="apc-verify-msg">{verifyMessage}</p>}
+      <div className={cx("apc-card apc-card-flush", cn["card"], cn["cardFlush"])}>
+        <div className={cx("apc-card-flush-header", cn["cardFlushHeader"])}>
+          <h2 className={cx("apc-section-title", cn["sectionTitle"])}>{t.historyTitle}</h2>
+          {verifyMessage && <p className={cx("apc-verify-msg", cn["verifyMsg"])}>{verifyMessage}</p>}
         </div>
 
         {loadingPurchases ? (
           <div style={{ padding: 20, display: "grid", gap: 8 }}>
             {[0, 1, 2].map((i) => (
-              <div key={i} className="apc-skeleton" />
+              <div key={i} className={cx("apc-skeleton", cn["skeleton"])} />
             ))}
           </div>
         ) : !purchases || purchases.items.length === 0 ? (
-          <div className="apc-empty">
-            <div className="apc-empty-icon">🧾</div>
+          <div className={cx("apc-empty", cn["empty"])}>
+            <div className={cx("apc-empty-icon", cn["emptyIcon"])}>🧾</div>
             <h3>{t.emptyTitle}</h3>
             <p className="apc-muted">{purchases ? t.emptyBody : t.emptyUnavailable}</p>
           </div>
         ) : (
           <>
-            <div className="apc-table-wrap">
-              <table className="apc-table">
+            <div className={cx("apc-table-wrap", cn["tableWrap"])}>
+              <table className={cx("apc-table", cn["table"])}>
                 <thead>
                   <tr>
                     <th>{t.dateHeader}</th>
@@ -182,24 +191,24 @@ export function CreditsSection(props: CreditsSectionProps) {
                   {purchases.items.map((p: Purchase) => (
                     <tr key={p.sessionId}>
                       <td>{formatDate(p.createdAt)}</td>
-                      <td>{p.amountARS !== null ? `$${formatARS(p.amountARS)}` : <span className="apc-muted">—</span>}</td>
-                      <td>{p.creditsUSD !== null ? formatCredits(p.creditsUSD) : <span className="apc-muted">—</span>}</td>
+                      <td>{p.amountARS !== null ? `$${formatARS(p.amountARS)}` : <span className="apc-muted">-</span>}</td>
+                      <td>{p.creditsUSD !== null ? formatCredits(p.creditsUSD) : <span className="apc-muted">-</span>}</td>
                       <td>
                         <StatusBadge status={p.status} />
                       </td>
                       <td>
-                        <div className="apc-actions">
+                        <div className={cx("apc-actions", cn["actions"])}>
                           {p.status !== "PAID" && p.paymentInitiated && (
                             <button
-                              className="apc-btn apc-btn-ghost"
+                              className={cx("apc-btn apc-btn-ghost", cn["btnGhost"])}
                               onClick={() => verifySession(p.sessionId)}
                               disabled={verifyingId !== null}
                             >
-                              {verifyingId === p.sessionId ? <span className="apc-spinner" /> : t.verifyAction}
+                              {verifyingId === p.sessionId ? <span className={cx("apc-spinner", cn["spinner"])} /> : t.verifyAction}
                             </button>
                           )}
                           {p.status === "PENDING" && p.url && (
-                            <button className="apc-btn apc-btn-ghost" onClick={() => continuePayment(p)}>
+                            <button className={cx("apc-btn apc-btn-ghost", cn["btnGhost"])} onClick={() => continuePayment(p)}>
                               {t.continueAction}
                             </button>
                           )}
@@ -212,17 +221,17 @@ export function CreditsSection(props: CreditsSectionProps) {
             </div>
 
             {purchases.pages > 1 && (
-              <div className="apc-pagination">
-                <span className="apc-pagination-info">{t.pageInfo(purchases.currentPage, purchases.pages, purchases.total)}</span>
+              <div className={cx("apc-pagination", cn["pagination"])}>
+                <span className={cx("apc-pagination-info", cn["paginationInfo"])}>{t.pageInfo(purchases.currentPage, purchases.pages, purchases.total)}</span>
                 <button
-                  className="apc-btn apc-btn-ghost"
+                  className={cx("apc-btn apc-btn-ghost", cn["btnGhost"])}
                   onClick={() => setPage(Math.max(1, page - 1))}
                   disabled={page <= 1 || loadingPurchases}
                 >
                   {t.prevPage}
                 </button>
                 <button
-                  className="apc-btn apc-btn-ghost"
+                  className={cx("apc-btn apc-btn-ghost", cn["btnGhost"])}
                   onClick={() => setPage(page + 1)}
                   disabled={page >= purchases.pages || loadingPurchases}
                 >

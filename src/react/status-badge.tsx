@@ -1,6 +1,7 @@
 "use client";
 
 import type { PurchaseStatus } from "../core/types.js";
+import { cx } from "./appearance.js";
 
 const LABELS: Record<PurchaseStatus, string> = {
   PAID: "Pagado",
@@ -14,6 +15,11 @@ const CLASS: Record<PurchaseStatus, string> = {
   EXPIRED: "apc-badge apc-badge-muted",
 };
 
-export function StatusBadge({ status }: { status: PurchaseStatus }) {
-  return <span className={CLASS[status]}>{LABELS[status]}</span>;
+export interface StatusBadgeProps {
+  status: PurchaseStatus;
+  className?: string;
+}
+
+export function StatusBadge({ status, className }: StatusBadgeProps) {
+  return <span className={cx(CLASS[status], className)}>{LABELS[status]}</span>;
 }
