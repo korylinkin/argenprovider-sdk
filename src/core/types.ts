@@ -5,6 +5,18 @@ export interface ProvisionResult {
   rotated?: boolean;
 }
 
+/**
+ * Key de free-tier de la plataforma: sin budget, restringida por allowlist a
+ * los modelos $0 vigentes en argenprovider. Sirve para que los usuarios
+ * finales usen modelos gratuitos aunque no tengan créditos.
+ */
+export interface FreeTierKeyResult {
+  apiKey: string;
+  /** Modelos gratuitos que esta key tiene permitido llamar. */
+  models: string[];
+  rotated: boolean;
+}
+
 export interface Balance {
   maxBudgetUSD: number;
   spendUSD: number;
