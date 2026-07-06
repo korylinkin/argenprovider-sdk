@@ -56,3 +56,65 @@ export interface Rates {
   usdToArs: number;
   arsPerUSD: number;
 }
+
+// ============================================================
+// GATEWAY LLM (LiteLLM detrás de argenprovider)
+// ============================================================
+
+/**
+ * Request OpenAI-compatible para /v1/chat/completions. El SDK no valida su
+ * forma más allá de model+messages: lo que mandes viaja tal cual al gateway
+ * (tools, temperature, max_tokens, cache_control, etc.).
+ */
+export interface ChatCompletionRequest {
+  model: string;
+  messages: unknown[];
+  [key: string]: unknown;
+}
+
+export interface ChatToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export interface ChatCompletionResponse {
+  id?: string;
+  model?: string;
+  choices?: Array<{
+    finish_reason?: string;
+    message?: {
+      role: string;
+      content: string | null;
+      tool_calls?: ChatToolCall[];
+    };
+  }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    /** Costo en USD calculado por LiteLLM, si el gateway lo reporta. */
+    total_cost?: number;
+    cost?: number;
+  };
+  [key: string]: unknown;
+}
+
+/** Precio por token en USD (mismo formato que expone OpenRouter). */
+export interface ModelPricing {
+  prompt: number;
+  completion: number;
+  image?: number;
+  request?: number;
+}
+
+export interface ModelInfo {
+  id: string;
+  pricing?: { usd?: ModelPricing; ars?: ModelPricing };
+  [key: string]: unknown;
+}
+
+export interface ModelList {
+  data: ModelInfo[];
+  exchangeRate?: number;
+}

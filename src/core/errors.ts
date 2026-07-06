@@ -10,8 +10,8 @@ export class ArgenProviderError extends Error {
 }
 
 export class NotConfiguredError extends Error {
-  constructor() {
-    super("argenprovider-sdk: baseUrl / provisionKey no configurados");
+  constructor(message = "argenprovider-sdk: baseUrl / provisionKey no configurados") {
+    super(message);
     this.name = "NotConfiguredError";
   }
 }

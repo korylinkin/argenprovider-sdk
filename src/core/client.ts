@@ -2,7 +2,10 @@ import { ArgenProviderError, NotConfiguredError } from "./errors.js";
 import type { KeyStore } from "./key-store.js";
 import type {
   Balance,
+  ChatCompletionRequest,
+  ChatCompletionResponse,
   CheckoutSession,
+  ModelList,
   ProvisionResult,
   PurchaseList,
   Rates,
@@ -14,6 +17,12 @@ export const SESSION_ID_RE = /^cs_[A-Za-z0-9_-]{20,}$/;
 
 /** Timeout por defecto de cada request a argenprovider. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
+
+/**
+ * Timeout por defecto de las llamadas al gateway LLM. Mucho más alto que
+ * DEFAULT_TIMEOUT_MS: una completion con tools puede tardar minutos.
+ */
+export const DEFAULT_GATEWAY_TIMEOUT_MS = 120_000;
 
 /** Observabilidad: se invoca cuando un request de solo-lectura falla en silencio. */
 export interface ArgenProviderErrorEvent {
@@ -27,6 +36,12 @@ export interface ArgenProviderErrorEvent {
 export interface ArgenProviderClientConfig {
   /** Base URL pública de argenprovider (ej: https://argenprovider.example.com). */
   baseUrl?: string;
+  /**
+   * Base URL pública del gateway LLM OpenAI-compatible (ej:
+   * https://api.argenprovider.cloud). Sin path: el SDK agrega
+   * /v1/chat/completions. Requerida solo para chatCompletion*.
+   */
+  gatewayUrl?: string;
   /** Provision key de la plataforma (prov-...). */
   provisionKey?: string;
   /** Storage inyectado para persistir la API key por usuario final. */
@@ -34,6 +49,8 @@ export interface ArgenProviderClientConfig {
   fetchImpl?: typeof fetch;
   /** Timeout por request en ms. Default DEFAULT_TIMEOUT_MS. */
   timeoutMs?: number;
+  /** Timeout de las llamadas al gateway LLM en ms. Default DEFAULT_GATEWAY_TIMEOUT_MS. */
+  gatewayTimeoutMs?: number;
   /**
    * Hook opcional para observar fallos de los métodos fail-soft (getBalance,
    * listPurchases, verifyPurchase, getRates). Sin él, esos fallos devuelven
@@ -77,10 +94,12 @@ function assertSecureBaseUrl(baseUrl?: string): void {
 export class ArgenProviderClient {
   readonly configured: boolean;
   private readonly baseUrl?: string;
+  private readonly gatewayUrl?: string;
   private readonly provisionKey?: string;
   private readonly keyStore?: KeyStore;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly gatewayTimeoutMs: number;
   private readonly onError?: (event: ArgenProviderErrorEvent) => void;
 
   // Single-flight: deduplica provisiones concurrentes del MISMO externalId.
@@ -91,11 +110,14 @@ export class ArgenProviderClient {
 
   constructor(config: ArgenProviderClientConfig = {}) {
     assertSecureBaseUrl(config.baseUrl);
+    assertSecureBaseUrl(config.gatewayUrl);
     this.baseUrl = config.baseUrl;
+    this.gatewayUrl = config.gatewayUrl;
     this.provisionKey = config.provisionKey;
     this.keyStore = config.keyStore;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.gatewayTimeoutMs = config.gatewayTimeoutMs ?? DEFAULT_GATEWAY_TIMEOUT_MS;
     this.onError = config.onError;
     this.configured = Boolean(this.baseUrl && this.provisionKey);
   }
@@ -112,6 +134,11 @@ export class ArgenProviderClient {
   /** fetch con timeout duro vía AbortSignal para no colgar al proxy de la plataforma. */
   private async fetchT(input: string, init: RequestInit = {}): Promise<Response> {
     return this.fetchImpl(input, { ...init, signal: AbortSignal.timeout(this.timeoutMs) });
+  }
+
+  /** Igual que fetchT pero con el timeout largo del gateway LLM. */
+  private async fetchGateway(input: string, init: RequestInit = {}): Promise<Response> {
+    return this.fetchImpl(input, { ...init, signal: AbortSignal.timeout(this.gatewayTimeoutMs) });
   }
 
   private report(scope: string, status: number | undefined, message: string): void {
@@ -340,6 +367,82 @@ export class ArgenProviderClient {
     } catch (e) {
       this.report("rates", undefined, e instanceof Error ? e.message : "error de red");
       return null;
+    }
+  }
+
+  /**
+   * Lista los modelos disponibles con su pricing (USD/ARS) y el tipo de
+   * cambio vigente. null si argenprovider no está configurado o no responde
+   * — a diferencia de chatCompletion, esto es fail-soft porque solo alimenta
+   * un selector de UI, no una acción de negocio.
+   */
+  async listModels(apiKey: string): Promise<ModelList | null> {
+    if (!this.baseUrl) return null;
+    try {
+      const res = await this.fetchT(`${this.baseUrl}/api/models`, {
+        headers: this.authHeaders(apiKey),
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        this.report("models", res.status, `models devolvió ${res.status}`);
+        return null;
+      }
+      return await res.json();
+    } catch (e) {
+      this.report("models", undefined, e instanceof Error ? e.message : "error de red");
+      return null;
+    }
+  }
+
+  /**
+   * Llama al gateway LLM (LiteLLM) OpenAI-compatible con la apiKey de un
+   * usuario final. A diferencia de los métodos de budget/checkout, esto NO es
+   * fail-soft: una completion fallida es una acción de negocio abortada, así
+   * que propaga el error (con `.status` en ArgenProviderError, para que el
+   * caller detecte 401 y decida si reintentar tras refreshKey).
+   */
+  async chatCompletion(
+    apiKey: string,
+    request: ChatCompletionRequest,
+    opts: { headers?: Record<string, string> } = {}
+  ): Promise<ChatCompletionResponse> {
+    if (!this.gatewayUrl) {
+      throw new NotConfiguredError("argenprovider-sdk: gatewayUrl no configurada");
+    }
+    const res = await this.fetchGateway(`${this.gatewayUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { ...this.authHeaders(apiKey), ...opts.headers },
+      body: JSON.stringify(request),
+    });
+    if (!res.ok) {
+      const body = await readErrorBody(res);
+      throw new ArgenProviderError(`chat/completions falló: ${res.status}`, res.status, body);
+    }
+    return res.json();
+  }
+
+  /**
+   * Variante de chatCompletion que resuelve la key del usuario vía keyStore
+   * (provisionando si hace falta) y, ante un 401 del gateway — key revocada
+   * por rotación o borrado manual — refresca la key una vez y reintenta.
+   * Requiere keyStore configurado.
+   */
+  async chatCompletionForUser(
+    externalId: string,
+    email: string,
+    request: ChatCompletionRequest,
+    opts: { headers?: Record<string, string> } = {}
+  ): Promise<ChatCompletionResponse> {
+    if (!this.keyStore) throw new NotConfiguredError("argenprovider-sdk: keyStore no configurado");
+    const apiKey = await this.getOrProvisionKey(externalId, email);
+    try {
+      return await this.chatCompletion(apiKey, request, opts);
+    } catch (e) {
+      if (e instanceof ArgenProviderError && e.status === 401) {
+        const freshKey = await this.refreshKey(externalId, email, undefined, apiKey);
+        return await this.chatCompletion(freshKey, request, opts);
+      }
+      throw e;
     }
   }
 }
