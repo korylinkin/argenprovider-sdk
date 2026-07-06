@@ -1,4 +1,4 @@
-import { ArgenProviderError, NotConfiguredError } from "./errors.js";
+import { ArgenProviderError, ModelNotAllowedError, NotConfiguredError, classifyGatewayError } from "./errors.js";
 import type { KeyStore } from "./key-store.js";
 import type {
   Balance,
@@ -432,7 +432,7 @@ export class ArgenProviderClient {
     });
     if (!res.ok) {
       const body = await readErrorBody(res);
-      throw new ArgenProviderError(`chat/completions falló: ${res.status}`, res.status, body);
+      throw classifyGatewayError(res.status, body, `chat/completions falló: ${res.status}`);
     }
     return res.json();
   }
@@ -441,7 +441,9 @@ export class ArgenProviderClient {
    * Variante de chatCompletion que resuelve la key del usuario vía keyStore
    * (provisionando si hace falta) y, ante un 401 del gateway — key revocada
    * por rotación o borrado manual — refresca la key una vez y reintenta.
-   * Requiere keyStore configurado.
+   * Un 401 por ModelNotAllowedError NO reintenta: refrescar la key no cambia
+   * la allowlist de modelos, así que sería una rotación desperdiciada que
+   * fallaría de nuevo con el mismo error. Requiere keyStore configurado.
    */
   async chatCompletionForUser(
     externalId: string,
@@ -454,7 +456,7 @@ export class ArgenProviderClient {
     try {
       return await this.chatCompletion(apiKey, request, opts);
     } catch (e) {
-      if (e instanceof ArgenProviderError && e.status === 401) {
+      if (e instanceof ArgenProviderError && e.status === 401 && !(e instanceof ModelNotAllowedError)) {
         const freshKey = await this.refreshKey(externalId, email, undefined, apiKey);
         return await this.chatCompletion(freshKey, request, opts);
       }
