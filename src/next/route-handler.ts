@@ -171,7 +171,8 @@ export function createCreditsRouteHandler(config: CreditsRouteConfig): CreditsRo
           returnUrl: resolveReturnUrl(req, returnPath, appBaseUrl),
         });
         return json({ sessionId: session.sessionId, url: session.url });
-      } catch {
+      } catch (e) {
+        console.error("[argenprovider-sdk] POST checkout falló:", e);
         return json({ error: "No se pudo iniciar la compra de créditos" }, { status: 502 });
       }
     }
