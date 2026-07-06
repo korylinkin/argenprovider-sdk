@@ -5,18 +5,6 @@ export interface ProvisionResult {
   rotated?: boolean;
 }
 
-/**
- * Key de free-tier de la plataforma: sin budget, restringida por allowlist a
- * los modelos $0 vigentes en argenprovider. Sirve para que los usuarios
- * finales usen modelos gratuitos aunque no tengan créditos.
- */
-export interface FreeTierKeyResult {
-  apiKey: string;
-  /** Modelos gratuitos que esta key tiene permitido llamar. */
-  models: string[];
-  rotated: boolean;
-}
-
 export interface Balance {
   maxBudgetUSD: number;
   spendUSD: number;
@@ -76,10 +64,11 @@ export interface Rates {
 /**
  * Request OpenAI-compatible para /v1/chat/completions. El SDK no valida su
  * forma más allá de model+messages: lo que mandes viaja tal cual al gateway
- * (tools, temperature, max_tokens, cache_control, etc.).
+ * (tools, temperature, max_tokens, cache_control, etc.). `model` es opcional:
+ * si se omite, se usa el `defaultModel` configurado en el cliente.
  */
 export interface ChatCompletionRequest {
-  model: string;
+  model?: string;
   messages: unknown[];
   [key: string]: unknown;
 }

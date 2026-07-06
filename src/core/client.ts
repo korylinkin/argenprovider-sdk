@@ -5,7 +5,6 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   CheckoutSession,
-  FreeTierKeyResult,
   ModelList,
   ProvisionResult,
   PurchaseList,
@@ -15,13 +14,6 @@ import type {
 } from "./types.js";
 
 export const SESSION_ID_RE = /^cs_[A-Za-z0-9_-]{20,}$/;
-
-/**
- * Id centinela bajo el que se persiste la free key de la plataforma en el
- * KeyStore. No colisiona con externalIds reales (los ids de usuario de una
- * plataforma no empiezan con "__").
- */
-export const FREE_TIER_KEY_ID = "__argen_free_tier__";
 
 /** Timeout por defecto de cada request a argenprovider. */
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -59,6 +51,13 @@ export interface ArgenProviderClientConfig {
   timeoutMs?: number;
   /** Timeout de las llamadas al gateway LLM en ms. Default DEFAULT_GATEWAY_TIMEOUT_MS. */
   gatewayTimeoutMs?: number;
+  /**
+   * Modelo a usar en chatCompletion/chatCompletionForUser cuando el caller no
+   * especifica `model` en el request. Pensado para que la plataforma configure
+   * acá su modelo gratuito curado: así ningún caller (ni uno nuevo que se
+   * olvide de pasar `model`) termina golpeando un modelo pago por accidente.
+   */
+  defaultModel?: string;
   /**
    * Hook opcional para observar fallos de los métodos fail-soft (getBalance,
    * listPurchases, verifyPurchase, getRates). Sin él, esos fallos devuelven
@@ -108,6 +107,7 @@ export class ArgenProviderClient {
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
   private readonly gatewayTimeoutMs: number;
+  private readonly defaultModel?: string;
   private readonly onError?: (event: ArgenProviderErrorEvent) => void;
 
   // Single-flight: deduplica provisiones concurrentes del MISMO externalId.
@@ -115,9 +115,6 @@ export class ArgenProviderClient {
   // ambos a provisionUser → el backend ROTA dos veces → el keyStore puede
   // terminar con la key ya revocada y el usuario recibe 401 en cada llamada.
   private readonly inflight = new Map<string, Promise<string>>();
-
-  // Cache en memoria de la free key cuando no hay KeyStore configurado.
-  private freeKeyMemo?: string;
 
   constructor(config: ArgenProviderClientConfig = {}) {
     assertSecureBaseUrl(config.baseUrl);
@@ -129,6 +126,7 @@ export class ArgenProviderClient {
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.gatewayTimeoutMs = config.gatewayTimeoutMs ?? DEFAULT_GATEWAY_TIMEOUT_MS;
+    this.defaultModel = config.defaultModel;
     this.onError = config.onError;
     this.configured = Boolean(this.baseUrl && this.provisionKey);
   }
@@ -240,89 +238,6 @@ export class ArgenProviderClient {
       await this.keyStore.delete(externalId);
     }
     return this.getOrProvisionKey(externalId, email, name);
-  }
-
-  /**
-   * Emite (o rota) la key de FREE-TIER de la plataforma. CRUDO: cada llamada
-   * al backend rota la key vigente. Usar getFreeTierKey para el caso normal.
-   */
-  async provisionFreeTierKey(): Promise<FreeTierKeyResult> {
-    const { url, key } = this.requireConfig();
-    const res = await this.fetchT(`${url}/api/provision/free-key`, {
-      method: "POST",
-      headers: this.authHeaders(key),
-    });
-    if (!res.ok) {
-      throw new ArgenProviderError(`provision/free-key falló: ${res.status}`, res.status, await readErrorBody(res));
-    }
-    return res.json();
-  }
-
-  /**
-   * Devuelve la key de free-tier de la plataforma (sin budget, restringida a
-   * los modelos $0). Con ella los usuarios finales pueden usar los modelos
-   * gratuitos aunque su budget de créditos esté agotado — LiteLLM bloquea toda
-   * request de un usuario con spend >= max_budget sin importar el costo del
-   * modelo, así que la key personal NO sirve para el free-tier en ese estado.
-   *
-   * Para conservar trazabilidad por usuario, pasá `user: <externalId>` en el
-   * body del chatCompletion hecho con esta key (queda como end_user en los
-   * spend logs de LiteLLM).
-   *
-   * Se persiste en el KeyStore bajo el id centinela FREE_TIER_KEY_ID; sin
-   * KeyStore se cachea en memoria (se rota una vez por proceso). Mismo
-   * single-flight y semántica de no-re-provisión que getOrProvisionKey.
-   */
-  async getFreeTierKey(): Promise<string> {
-    if (this.keyStore) {
-      const existing = await this.keyStore.get(FREE_TIER_KEY_ID);
-      if (existing) return existing;
-    } else if (this.freeKeyMemo) {
-      return this.freeKeyMemo;
-    }
-
-    const pending = this.inflight.get(FREE_TIER_KEY_ID);
-    if (pending) return pending;
-
-    const task = (async () => {
-      if (this.keyStore) {
-        const existing = await this.keyStore.get(FREE_TIER_KEY_ID);
-        if (existing) return existing;
-      }
-      const result = await this.provisionFreeTierKey();
-      if (this.keyStore) {
-        await this.keyStore.save(FREE_TIER_KEY_ID, result.apiKey, {});
-      }
-      this.freeKeyMemo = result.apiKey;
-      return result.apiKey;
-    })();
-
-    this.inflight.set(FREE_TIER_KEY_ID, task);
-    try {
-      return await task;
-    } finally {
-      this.inflight.delete(FREE_TIER_KEY_ID);
-    }
-  }
-
-  /**
-   * Descarta la free key guardada y emite una nueva (recuperación tras 401
-   * del gateway). Misma semántica compare-and-delete que refreshKey: con
-   * `failedKey`, si otra request ya rotó y guardó una key distinta, se
-   * devuelve esa en vez de rotar de nuevo.
-   */
-  async refreshFreeTierKey(failedKey?: string): Promise<string> {
-    if (this.keyStore) {
-      if (failedKey !== undefined) {
-        const current = await this.keyStore.get(FREE_TIER_KEY_ID);
-        if (current && current !== failedKey) return current;
-      }
-      await this.keyStore.delete(FREE_TIER_KEY_ID);
-    } else if (failedKey !== undefined && this.freeKeyMemo && this.freeKeyMemo !== failedKey) {
-      return this.freeKeyMemo;
-    }
-    this.freeKeyMemo = undefined;
-    return this.getFreeTierKey();
   }
 
   /** Ceros/null si argenprovider no está configurado, no responde o el usuario no tiene budget. Fail-soft. */
@@ -503,10 +418,17 @@ export class ArgenProviderClient {
     if (!this.gatewayUrl) {
       throw new NotConfiguredError("argenprovider-sdk: gatewayUrl no configurada");
     }
+    const model = request.model ?? this.defaultModel;
+    if (!model) {
+      throw new ArgenProviderError(
+        "chatCompletion: no se especificó `model` y el cliente no tiene defaultModel configurado",
+        0
+      );
+    }
     const res = await this.fetchGateway(`${this.gatewayUrl}/v1/chat/completions`, {
       method: "POST",
       headers: { ...this.authHeaders(apiKey), ...opts.headers },
-      body: JSON.stringify(request),
+      body: JSON.stringify({ ...request, model }),
     });
     if (!res.ok) {
       const body = await readErrorBody(res);
