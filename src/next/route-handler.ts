@@ -93,11 +93,20 @@ export function createCreditsRouteHandler(config: CreditsRouteConfig): CreditsRo
   const enforceSameOrigin = config.enforceSameOrigin ?? true;
 
   async function GET(req: Request, ctx: { params: Promise<{ path?: string[] }> }): Promise<Response> {
-    const auth = await config.auth(req);
-    if (!auth) return json({ error: "No autenticado" }, { status: 401 });
-
     const { path = [] } = await ctx.params;
     const url = new URL(req.url);
+
+    if (path.length === 1 && path[0] === "models") {
+      if (!rateLimit("models:list", readLimit.max, readLimit.windowMs)) {
+        return json({ error: "Demasiadas peticiones" }, { status: 429 });
+      }
+      const models = await config.client.listModels();
+      if (!models) return json({ error: "unavailable" }, { status: 503 });
+      return json(models);
+    }
+
+    const auth = await config.auth(req);
+    if (!auth) return json({ error: "No autenticado" }, { status: 401 });
 
     if (path.length === 1 && path[0] === "balance") {
       if (!rateLimit(`balance:${auth.userId}`, readLimit.max, readLimit.windowMs)) {

@@ -385,11 +385,12 @@ export class ArgenProviderClient {
    * — a diferencia de chatCompletion, esto es fail-soft porque solo alimenta
    * un selector de UI, no una acción de negocio.
    */
-  async listModels(apiKey: string): Promise<ModelList | null> {
+  async listModels(apiKey?: string): Promise<ModelList | null> {
     if (!this.baseUrl) return null;
     try {
+      const headers = apiKey ? this.authHeaders(apiKey) : undefined;
       const res = await this.fetchT(`${this.baseUrl}/api/models`, {
-        headers: this.authHeaders(apiKey),
+        headers,
         cache: "no-store",
       });
       if (!res.ok) {
