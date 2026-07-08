@@ -40,7 +40,7 @@ const DEFAULT_TEXTS: CreditsTexts = {
   balanceUnavailable: "No se pudo consultar el saldo en este momento.",
   buyButton: "Comprar créditos",
   checkingPopup: "Verificando tu pago…",
-  hint: "Vas a ser redirigido a un checkout seguro de MercadoPago.",
+  hint: "Vas a ser redirigido a un checkout seguro de MercadoPago.  ",
   historyTitle: "Historial de compras",
   emptyTitle: "Sin compras todavía",
   emptyBody: "Cuando compres créditos, vas a ver el estado de cada pago acá.",
@@ -150,7 +150,7 @@ export function CreditsSection(props: CreditsSectionProps) {
               </p>
             )}
 
-            {arsPerUSD !== null && <p className={cx("apc-rate", cn["rate"])}>1 crédito = ${formatARS(arsPerUSD)} ARS</p>}
+            {arsPerUSD !== null && <p className={cx("apc-rate", cn["rate"])}>1 crédito = ${formatARS(arsPerUSD)} ARS - <small>1M tokens equivalen a 750mil palabras aproximadamente o entre 1200 y 1500 paginas de texto denso en pdf.</small></p>}
             <p className={cx("apc-hint", cn["hint"])}>{t.hint}</p>
           </>
         )}
